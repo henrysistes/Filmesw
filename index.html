@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<title>Video Sync Cinema</title>
+<style>
+  /* Modo noturno */
+  body {
+    margin: 0;
+    font-family: Arial, sans-serif;
+    background-color: #111;
+    color: #eee;
+    display: flex;
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  /* Container principal */
+  .container {
+    display: flex;
+    width: 100%;
+    height: 100%;
+  }
+
+  /* Vídeo central */
+  .video-container {
+    flex: 3;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    background-color: #000;
+  }
+
+  video {
+    width: 90%;
+    max-width: 900px;
+    border-radius: 8px;
+    box-shadow: 0 0 20px rgba(0,0,0,0.7);
+  }
+
+  /* Sidebar do chat */
+  .chat-container {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    border-left: 1px solid #333;
+    background-color: #1a1a1a;
+  }
+
+  #chat {
+    flex: 1;
+    padding: 10px;
+    overflow-y: auto;
+    border-bottom: 1px solid #333;
+  }
+
+  input[type="text"], input[type="file"] {
+    width: calc(100% - 20px);
+    padding: 8px;
+    margin: 5px 10px;
+    border-radius: 5px;
+    border: none;
+    outline: none;
+    font-size: 14px;
+  }
+
+  button {
+    padding: 8px 12px;
+    margin: 5px 10px;
+    background-color: #444;
+    color: #eee;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 14px;
+  }
+
+  button:hover {
+    background-color: #666;
+  }
+
+  .chat-message {
+    margin-bottom: 6px;
+    padding: 4px 6px;
+    border-radius: 4px;
+    background-color: #222;
+    word-wrap: break-word;
+  }
+
+  a {
+    color: #4fa1f3;
+  }
+</style>
+</head>
+<body>
+
+<div class="container">
+  <!-- Video central -->
+  <div class="video-container">
+    <video id="video" controls>
+      <source id="videoSource" src="video.mp4" type="video/mp4">
+      Seu navegador não suporta vídeo.
+    </video>
+  </div>
+
+  <!-- Chat lateral -->
+  <div class="chat-container">
+    <div id="chat"></div>
+    <input type="text" id="message" placeholder="Digite uma mensagem...">
+    <button id="send">Enviar</button>
+    <input type="file" id="videoUpload" accept="video/mp4">
+    <button id="uploadVideo">Enviar vídeo</button>
+  </div>
+</div>
+
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/9.22.2/firebase-app.js";
+  import { getDatabase, ref, push, onChildAdded, set, onValue } from "https://www.gstatic.com/firebasejs/9.22.2/firebase-database.js";
+  import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/9.22.2/firebase-storage.js";
+
+  // Firebase config
+  const firebaseConfig = {
+    apiKey: "AIzaSyC0QJC41nKlt3Qx9eG6DITqCPgidu-kdsk",
+    authDomain: "chat-35b8e.firebaseapp.com",
+    databaseURL: "https://chat-35b8e-default-rtdb.firebaseio.com",
+    projectId: "chat-35b8e",
+    storageBucket: "chat-35b8e.firebasestorage.app",
+    messagingSenderId: "408615680023",
+    appId: "1:408615680023:web:a929702db9a3c87ed70452",
+    measurementId: "G-PQZPZ42581"
+  };
+
+  // Inicializa Firebase
+  const app = initializeApp(firebaseConfig);
+  const db = getDatabase(app);
+  const storage = getStorage(app);
+
+  const video = document.getElementById("video");
+  const videoSource = document.getElementById("videoSource");
+  const chatDiv = document.getElementById("chat");
+  const messageInput = document.getElementById("message");
+  const sendBtn = document.getElementById("send");
+  const videoUpload = document.getElementById("videoUpload");
+  const uploadVideoBtn = document.getElementById("uploadVideo");
+
+  const videoRefDB = ref(db, 'videoSync');
+  const chatRef = ref(db, 'chat');
+  const videoURLRef = ref(db, 'currentVideo'); // URL do vídeo atual
+
+  // -------- Video Sync --------
+  function sendVideoAction(action) {
+    set(videoRefDB, {
+      action: action,
+      time: video.currentTime,
+      timestamp: Date.now()
+    });
+  }
+
+  video.addEventListener('play', () => sendVideoAction('play'));
+  video.addEventListener('pause', () => sendVideoAction('pause'));
+  video.addEventListener('seeked', () => sendVideoAction('seek'));
+
+  onValue(videoRefDB, (snapshot) => {
+    const data = snapshot.val();
+    if (!data) return;
+
+    const localTime = video.currentTime;
+    const remoteTime = data.time;
+
+    if (Math.abs(localTime - remoteTime) > 0.5) {
+      video.currentTime = remoteTime;
+    }
+
+    if (data.action === 'play' && video.paused) video.play();
+    if (data.action === 'pause' && !video.paused) video.pause();
+  });
+
+  // -------- Chat --------
+  sendBtn.addEventListener('click', () => {
+    if (messageInput.value.trim() === '') return;
+    push(chatRef, { text: messageInput.value, timestamp: Date.now() });
+    messageInput.value = '';
+  });
+
+  onChildAdded(chatRef, (snapshot) => {
+    const msg = snapshot.val();
+    const msgDiv = document.createElement('div');
+    msgDiv.classList.add('chat-message');
+    msgDiv.textContent = msg.text;
+    chatDiv.appendChild(msgDiv);
+    chatDiv.scrollTop = chatDiv.scrollHeight;
+  });
+
+  // -------- Upload de vídeo --------
+  uploadVideoBtn.addEventListener('click', async () => {
+    if (videoUpload.files.length === 0) return;
+
+    const file = videoUpload.files[0];
+    const storageReference = storageRef(storage, `videos/${file.name}`);
+
+    // Upload do arquivo
+    await uploadBytes(storageReference, file);
+    const url = await getDownloadURL(storageReference);
+
+    // Atualiza a URL do vídeo no Realtime Database
+    set(videoURLRef, { url: url, timestamp: Date.now() });
+    videoUpload.value = '';
+  });
+
+  // -------- Detecta novo vídeo --------
+  onValue(videoURLRef, (snapshot) => {
+    const data = snapshot.val();
+    if (!data) return;
+
+    if (videoSource.src !== data.url) {
+      videoSource.src = data.url;
+      video.load();
+      video.currentTime = 0;
+      video.pause();
+    }
+  });
+
+</script>
+</body>
+</html>
